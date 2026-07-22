@@ -1,0 +1,21 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pydantic==2.13.4
+pydantic-settings==2.14.2
+python-dotenv==1.2.2
+
+# PDF 처리
+pymupdf==1.28.0
+
+# 벡터DB
+chromadb==1.5.9
+
+# 임베딩 (한국어 지원 멀티링구얼 모델)
+sentence-transformers==3.1.1
+
+# 엑셀(고장현황 overview) 읽기
+openpyxl==3.1.5
+
+# HWP(한글) 고장사례 문서 텍스트 추출
+pyhwp==0.1b15

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: cheonjae-ddasomi-backend
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: DOCUMENTS_DIR
+        value: /var/data/documents
+      - key: CHROMA_DIR
+        value: /var/data/chroma_db
+      - key: FAULT_CASE_DIR
+        value: /var/data/fault_cases
+      - key: HISTORY_DB_PATH
+        value: /var/data/chat_history.db
+    disk:
+      name: cheonjae-data
+      mountPath: /var/data
+      sizeGB: 1

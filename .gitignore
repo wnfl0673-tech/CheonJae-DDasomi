@@ -1,0 +1,20 @@
+backend/.env
+backend/chroma_db/
+backend/documents/*.pdf
+backend/fault_cases/*
+!backend/fault_cases/.gitkeep
+backend/chat_history.db
+backend/*.log
+backend/__pycache__/
+backend/**/__pycache__/
+backend/venv/
+backend/.venv/
+
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/tsconfig.tsbuildinfo
+
+# 디자인 목업 원본 (배포에 불필요)
+stitch_ai/
+stitch_ai.zip
