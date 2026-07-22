@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import List, Tuple
 from urllib.parse import quote
@@ -15,6 +16,7 @@ from app.schemas import (
 from app.services import fault_case_processor, fault_case_store, pdf_processor
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 ALLOWED_FAULT_CASE_EXTENSIONS = {".pdf", ".hwp", ".xlsx"}
 MAX_UPLOAD_SIZE_BYTES = settings.max_upload_size_mb * 1024 * 1024
@@ -222,7 +224,7 @@ def _index_fault_case_files_in_background(paths: List[Path]) -> None:
         try:
             _index_uploaded_fault_case_file(path)
         except Exception:  # noqa: BLE001 - 백그라운드 작업 실패가 서버를 죽이지 않도록
-            pass
+            logger.exception("백그라운드 고장사례 인덱싱 실패: %s", path.name)
 
 
 @router.post("/api/fault-cases/upload", response_model=UploadQueuedResponse)

@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import List, Optional
 
@@ -14,6 +15,7 @@ from app.schemas import (
 from app.services import full_text_search, pdf_processor, vector_store
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 ALLOWED_DOCUMENT_EXTENSIONS = {".pdf"}
 MAX_UPLOAD_SIZE_BYTES = settings.max_upload_size_mb * 1024 * 1024
@@ -87,7 +89,7 @@ def _index_pdfs_in_background(pdf_paths: List[Path]) -> None:
             if _index_single_pdf(pdf_path) is not None:
                 indexed_any = True
         except Exception:  # noqa: BLE001 - 백그라운드 작업 실패가 서버를 죽이지 않도록
-            pass
+            logger.exception("백그라운드 인덱싱 실패: %s", pdf_path.name)
 
     if indexed_any:
         full_text_search.rebuild_cache()

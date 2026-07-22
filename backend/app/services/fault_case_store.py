@@ -5,6 +5,7 @@
 공유해 리소스를 중복 로드하지 않는다.
 """
 
+import gc
 from typing import List, Optional
 
 from app.config import settings
@@ -32,8 +33,9 @@ def case_exists(case_id: str) -> bool:
 
 
 # add() 호출마다 임베딩 함수가 배치 전체를 한 번에 인코딩하므로, 엑셀 개요표처럼
-# 수백 건이 한 번에 들어올 때 메모리가 제한된 배포 환경에서 OOM이 나지 않도록 작게 나눈다.
-MAX_ADD_BATCH_SIZE = 200
+# 수백 건이 한 번에 들어올 때 메모리가 제한된 배포 환경에서 OOM이 나지 않도록 작게
+# 나누고, 배치 사이마다 gc.collect()로 메모리가 계속 누적되지 않게 한다.
+MAX_ADD_BATCH_SIZE = 20
 
 
 def add_fault_cases(cases: List[FaultCase]) -> int:
@@ -59,6 +61,7 @@ def add_fault_cases(cases: List[FaultCase]) -> int:
                 for c in batch
             ],
         )
+        gc.collect()
     return len(cases)
 
 
