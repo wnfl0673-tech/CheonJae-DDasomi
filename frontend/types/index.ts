@@ -88,10 +88,8 @@ export interface DocumentFileInfo {
   pages: number;
 }
 
-export interface DocumentUploadResponse {
-  indexed_files: { file_name: string; pages: number; chunks: number }[];
-  skipped_files: string[];
-  total_chunks_added: number;
+export interface UploadQueuedResponse {
+  queued_files: string[];
   message: string;
   errors: string[];
 }
@@ -101,11 +99,4 @@ export interface FaultCaseFileInfo {
   source_type: "pdf" | "hwp" | "excel";
   size_bytes: number;
   case_count: number;
-}
-
-export interface FaultCaseUploadResponse {
-  added: number;
-  skipped: number;
-  errors: string[];
-  message: string;
 }

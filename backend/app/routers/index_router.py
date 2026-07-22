@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 
 from app.config import settings
 from app.schemas import (
@@ -10,6 +10,7 @@ from app.schemas import (
     DocumentListResponse,
     IndexedFileInfo,
     IndexResponse,
+    UploadQueuedResponse,
 )
 from app.services import full_text_search, pdf_processor, vector_store
 
@@ -90,13 +91,36 @@ def list_documents():
     return DocumentListResponse(files=files)
 
 
-@router.post("/api/documents", response_model=IndexResponse)
-async def upload_documents(files: List[UploadFile] = File(...)):
-    """Doc Management 탭에서 업로드한 PDF를 저장하고 즉시 인덱싱한다."""
-    indexed: list[IndexedFileInfo] = []
-    skipped: list[str] = []
+def _index_pdfs_in_background(pdf_paths: List[Path]) -> None:
+    """업로드 응답을 먼저 반환한 뒤 백그라운드 스레드에서 실행되는 인덱싱 작업.
+
+    대용량 PDF(수백~수천 청크)는 임베딩 계산에 요청 제한시간(보통 30~60초)을 넘길 만큼
+    오래 걸릴 수 있어, HTTP 요청 안에서 동기로 처리하면 배포 환경(Railway 등)의 프록시가
+    연결을 강제 종료해버린다. 그래서 파일 저장까지만 요청 안에서 하고, 실제 인덱싱은
+    응답 이후 백그라운드에서 진행한다.
+    """
+    indexed_any = False
+    for pdf_path in pdf_paths:
+        try:
+            if _index_single_pdf(pdf_path) is not None:
+                indexed_any = True
+        except Exception:  # noqa: BLE001 - 백그라운드 작업 실패가 서버를 죽이지 않도록
+            pass
+
+    if indexed_any:
+        full_text_search.rebuild_cache()
+
+
+@router.post("/api/documents", response_model=UploadQueuedResponse)
+async def upload_documents(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)):
+    """Doc Management 탭에서 업로드한 PDF를 저장하고, 인덱싱은 백그라운드로 넘긴다.
+
+    응답에는 인덱싱 결과(청크 수 등)가 아직 반영되지 않는다. GET /api/documents를
+    잠시 후 다시 호출하면 chunks/pages 값이 채워진 것으로 완료 여부를 확인할 수 있다.
+    """
+    queued: list[str] = []
     errors: list[str] = []
-    total_chunks = 0
+    saved_paths: list[Path] = []
 
     for upload in files:
         safe_name = Path(upload.filename or "").name
@@ -111,33 +135,17 @@ async def upload_documents(files: List[UploadFile] = File(...)):
 
         dest = settings.documents_dir / safe_name
         dest.write_bytes(content)
+        saved_paths.append(dest)
+        queued.append(safe_name)
 
-        try:
-            result = _index_single_pdf(dest)
-        except Exception as exc:  # noqa: BLE001 - 개별 파일 실패가 전체 업로드를 막지 않도록
-            errors.append(f"{safe_name}: {exc}")
-            continue
+    if saved_paths:
+        background_tasks.add_task(_index_pdfs_in_background, saved_paths)
 
-        if result is None:
-            skipped.append(safe_name)
-        else:
-            indexed.append(result)
-            total_chunks += result.chunks
-
-    if indexed:
-        full_text_search.rebuild_cache()
-
-    message = f"업로드 완료: {len(indexed)}개 파일 인덱싱, {len(skipped)}개 스킵(변경 없음)."
+    message = f"{len(queued)}개 파일 업로드 완료. 백그라운드에서 인덱싱 중이니 잠시 후 목록을 새로고침해 확인하세요."
     if errors:
         message += f" 오류 {len(errors)}건."
 
-    return IndexResponse(
-        indexed_files=indexed,
-        skipped_files=skipped,
-        total_chunks_added=total_chunks,
-        message=message,
-        errors=errors,
-    )
+    return UploadQueuedResponse(queued_files=queued, message=message, errors=errors)
 
 
 @router.delete("/api/documents/{filename}", response_model=DeleteResponse)

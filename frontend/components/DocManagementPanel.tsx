@@ -1,6 +1,6 @@
 "use client";
 
-import { DragEvent, useEffect, useState } from "react";
+import { DragEvent, useEffect, useRef, useState } from "react";
 import {
   deleteDocument,
   deleteFaultCaseFile,
@@ -88,19 +88,54 @@ function DocumentSection({ title, description, accept }: DocumentSectionProps) {
   const [files, setFiles] = useState<DocumentFileInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [indexing, setIndexing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  function load() {
+  function load(): Promise<DocumentFileInfo[]> {
     setLoading(true);
-    listDocuments()
-      .then(setFiles)
-      .catch((err) => setMessage(err instanceof Error ? err.message : "목록을 불러오지 못했습니다."))
+    return listDocuments()
+      .then((data) => {
+        setFiles(data);
+        return data;
+      })
+      .catch((err) => {
+        setMessage(err instanceof Error ? err.message : "목록을 불러오지 못했습니다.");
+        return [];
+      })
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
     load();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
+
+  function pollUntilIndexed(fileNames: string[]) {
+    if (pollRef.current) clearInterval(pollRef.current);
+    setIndexing(true);
+    let attempts = 0;
+    const maxAttempts = 40; // 4초 간격 * 40회 ≈ 대용량 PDF 임베딩 완료를 기다리기 위해 넉넉하게
+    pollRef.current = setInterval(async () => {
+      attempts += 1;
+      const data = await load();
+      const allDone = fileNames.every((name) => {
+        const f = data.find((x) => x.file_name === name);
+        return f && f.chunks > 0;
+      });
+      if (allDone || attempts >= maxAttempts) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        setIndexing(false);
+        setMessage(
+          allDone
+            ? "인덱싱 완료."
+            : "인덱싱이 예상보다 오래 걸리고 있어요. 잠시 후 목록을 새로고침해보세요."
+        );
+      }
+    }, 4000);
+  }
 
   async function handleFilesSelected(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
@@ -109,7 +144,10 @@ function DocumentSection({ title, description, accept }: DocumentSectionProps) {
     try {
       const result = await uploadDocuments(Array.from(fileList));
       setMessage(result.message);
-      load();
+      await load();
+      if (result.queued_files.length > 0) {
+        pollUntilIndexed(result.queued_files);
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "업로드에 실패했습니다.");
     } finally {
@@ -141,7 +179,12 @@ function DocumentSection({ title, description, accept }: DocumentSectionProps) {
         onFilesSelected={handleFilesSelected}
       />
 
-      {message && <p className="text-body-sm text-on-tertiary-container">{message}</p>}
+      {message && (
+        <p className="text-body-sm text-on-tertiary-container flex items-center gap-1">
+          {indexing && <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>}
+          {message}
+        </p>
+      )}
 
       <div className="space-y-xs">
         {loading ? (
@@ -159,7 +202,7 @@ function DocumentSection({ title, description, accept }: DocumentSectionProps) {
                 <div className="min-w-0">
                   <p className="font-body-sm text-on-surface truncate">{f.file_name}</p>
                   <p className="text-[11px] text-on-tertiary-container">
-                    {formatSize(f.size_bytes)} · {f.chunks}청크 / {f.pages}페이지
+                    {f.chunks === 0 ? "인덱싱 대기/진행 중..." : `${formatSize(f.size_bytes)} · ${f.chunks}청크 / ${f.pages}페이지`}
                   </p>
                 </div>
               </div>
@@ -182,19 +225,54 @@ function FaultCaseSection() {
   const [files, setFiles] = useState<FaultCaseFileInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [indexing, setIndexing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  function load() {
+  function load(): Promise<FaultCaseFileInfo[]> {
     setLoading(true);
-    listFaultCaseFiles()
-      .then(setFiles)
-      .catch((err) => setMessage(err instanceof Error ? err.message : "목록을 불러오지 못했습니다."))
+    return listFaultCaseFiles()
+      .then((data) => {
+        setFiles(data);
+        return data;
+      })
+      .catch((err) => {
+        setMessage(err instanceof Error ? err.message : "목록을 불러오지 못했습니다.");
+        return [];
+      })
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
     load();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
+
+  function pollUntilIndexed(fileNames: string[]) {
+    if (pollRef.current) clearInterval(pollRef.current);
+    setIndexing(true);
+    let attempts = 0;
+    const maxAttempts = 40;
+    pollRef.current = setInterval(async () => {
+      attempts += 1;
+      const data = await load();
+      const allDone = fileNames.every((name) => {
+        const f = data.find((x) => x.file_name === name);
+        return f && f.case_count > 0;
+      });
+      if (allDone || attempts >= maxAttempts) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        setIndexing(false);
+        setMessage(
+          allDone
+            ? "인덱싱 완료."
+            : "인덱싱이 예상보다 오래 걸리고 있어요. 잠시 후 목록을 새로고침해보세요."
+        );
+      }
+    }, 4000);
+  }
 
   async function handleFilesSelected(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
@@ -203,7 +281,10 @@ function FaultCaseSection() {
     try {
       const result = await uploadFaultCaseFiles(Array.from(fileList));
       setMessage(result.message);
-      load();
+      await load();
+      if (result.queued_files.length > 0) {
+        pollUntilIndexed(result.queued_files);
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "업로드에 실패했습니다.");
     } finally {
@@ -237,7 +318,12 @@ function FaultCaseSection() {
         onFilesSelected={handleFilesSelected}
       />
 
-      {message && <p className="text-body-sm text-on-tertiary-container">{message}</p>}
+      {message && (
+        <p className="text-body-sm text-on-tertiary-container flex items-center gap-1">
+          {indexing && <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>}
+          {message}
+        </p>
+      )}
 
       <div className="space-y-xs">
         {loading ? (
@@ -255,7 +341,9 @@ function FaultCaseSection() {
                 <div className="min-w-0">
                   <p className="font-body-sm text-on-surface truncate">{f.file_name}</p>
                   <p className="text-[11px] text-on-tertiary-container">
-                    {sourceTypeLabel(f.source_type)} · {formatSize(f.size_bytes)} · 사례 {f.case_count}건
+                    {f.case_count === 0
+                      ? "인덱싱 대기/진행 중..."
+                      : `${sourceTypeLabel(f.source_type)} · ${formatSize(f.size_bytes)} · 사례 ${f.case_count}건`}
                   </p>
                 </div>
               </div>

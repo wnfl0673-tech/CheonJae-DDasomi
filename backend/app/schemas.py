@@ -102,6 +102,15 @@ class DeleteResponse(BaseModel):
     message: str
 
 
+class UploadQueuedResponse(BaseModel):
+    """업로드 직후 응답. 인덱싱은 백그라운드에서 진행되며, 목록 API를 다시 조회하면
+    chunks/case_count가 채워지는 것으로 완료 여부를 확인할 수 있다."""
+
+    queued_files: List[str]
+    message: str
+    errors: List[str] = Field(default_factory=list)
+
+
 class FaultCaseFileInfo(BaseModel):
     file_name: str
     source_type: str  # pdf | hwp | excel

@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import List, Tuple
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from app.config import settings
@@ -11,6 +11,7 @@ from app.schemas import (
     FaultCaseFileInfo,
     FaultCaseFileListResponse,
     FaultCaseIndexResponse,
+    UploadQueuedResponse,
 )
 from app.services import fault_case_processor, fault_case_store, pdf_processor
 
@@ -290,11 +291,25 @@ def list_fault_case_files():
     return FaultCaseFileListResponse(files=files)
 
 
-@router.post("/api/fault-cases/upload", response_model=FaultCaseIndexResponse)
-async def upload_fault_cases(files: List[UploadFile] = File(...)):
-    """Doc Management 탭에서 업로드한 고장사례(PDF/HWP/엑셀)를 저장하고 즉시 인덱싱한다."""
-    added = 0
+def _index_fault_case_files_in_background(paths: List[Path]) -> None:
+    """대용량 PDF/HWP 인덱싱이 요청 제한시간을 넘기지 않도록 응답 이후 백그라운드에서 처리."""
+    for path in paths:
+        try:
+            _index_uploaded_fault_case_file(path)
+        except Exception:  # noqa: BLE001 - 백그라운드 작업 실패가 서버를 죽이지 않도록
+            pass
+
+
+@router.post("/api/fault-cases/upload", response_model=UploadQueuedResponse)
+async def upload_fault_cases(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)):
+    """Doc Management 탭에서 업로드한 고장사례(PDF/HWP/엑셀)를 저장하고, 인덱싱은 백그라운드로 넘긴다.
+
+    GET /api/fault-cases를 잠시 후 다시 호출하면 case_count 값이 채워진 것으로
+    완료 여부를 확인할 수 있다.
+    """
+    queued: list[str] = []
     errors: list[str] = []
+    saved_paths: list[Path] = []
 
     for upload in files:
         safe_name = Path(upload.filename or "").name
@@ -310,16 +325,17 @@ async def upload_fault_cases(files: List[UploadFile] = File(...)):
 
         dest = settings.fault_case_dir / safe_name
         dest.write_bytes(content)
+        saved_paths.append(dest)
+        queued.append(safe_name)
 
-        file_added, file_errors = _index_uploaded_fault_case_file(dest)
-        added += file_added
-        errors.extend(file_errors)
+    if saved_paths:
+        background_tasks.add_task(_index_fault_case_files_in_background, saved_paths)
 
-    message = f"업로드 완료: {added}건 인덱싱."
+    message = f"{len(queued)}개 파일 업로드 완료. 백그라운드에서 인덱싱 중이니 잠시 후 목록을 새로고침해 확인하세요."
     if errors:
         message += f" 오류 {len(errors)}건."
 
-    return FaultCaseIndexResponse(added=added, skipped=0, errors=errors, message=message)
+    return UploadQueuedResponse(queued_files=queued, message=message, errors=errors)
 
 
 @router.delete("/api/fault-cases/{filename}", response_model=DeleteResponse)

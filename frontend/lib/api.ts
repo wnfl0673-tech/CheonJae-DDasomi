@@ -3,10 +3,9 @@ import {
   ConversationDetail,
   ConversationSummary,
   DocumentFileInfo,
-  DocumentUploadResponse,
   FaultCaseFileInfo,
-  FaultCaseUploadResponse,
   StatusResponse,
+  UploadQueuedResponse,
 } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -100,7 +99,7 @@ export async function listDocuments(): Promise<DocumentFileInfo[]> {
   return data.files;
 }
 
-export async function uploadDocuments(files: File[]): Promise<DocumentUploadResponse> {
+export async function uploadDocuments(files: File[]): Promise<UploadQueuedResponse> {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
 
@@ -128,7 +127,7 @@ export async function listFaultCaseFiles(): Promise<FaultCaseFileInfo[]> {
   return data.files;
 }
 
-export async function uploadFaultCaseFiles(files: File[]): Promise<FaultCaseUploadResponse> {
+export async function uploadFaultCaseFiles(files: File[]): Promise<UploadQueuedResponse> {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
 
