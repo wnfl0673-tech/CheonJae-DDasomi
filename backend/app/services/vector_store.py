@@ -66,7 +66,9 @@ def delete_file_chunks(file_name: str) -> None:
 
 # ChromaDB(Rust 백엔드)는 한 번의 add() 호출에 담을 수 있는 항목 수 제한이 있다.
 # 1GB급 문서에서는 파일 하나가 수천 개 청크를 만들 수 있으므로 배치로 나눠 추가한다.
-MAX_ADD_BATCH_SIZE = 4000
+# add() 호출마다 임베딩 함수가 배치 전체를 한 번에 인코딩하므로, 배치 크기가 크면
+# 메모리가 제한된 배포 환경(예: RAM 1GB)에서 OOM으로 죽을 수 있어 작게 유지한다.
+MAX_ADD_BATCH_SIZE = 200
 
 
 def add_chunks(chunks: List[Chunk], file_hash: str) -> int:

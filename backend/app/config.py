@@ -21,9 +21,11 @@ class Settings(BaseSettings):
     fault_case_dir: Path = BACKEND_DIR / "fault_cases"
     fault_case_collection_name: str = "fault_cases"
 
-    # 청크 분할 설정 (1GB급 문서 확장 시에도 그대로 사용)
-    chunk_size: int = 800
-    chunk_overlap: int = 150
+    # 청크 분할 설정. 너무 작으면(표 많은 문서에서) 파일 하나가 수천 개 청크로
+    # 쪼개져 임베딩 계산량이 커지고 메모리 제한 환경에서 느려지거나 OOM이 날 수 있어,
+    # 검색 단위가 다소 커지는 것을 감수하고 크게 잡는다.
+    chunk_size: int = 1800
+    chunk_overlap: int = 250
 
     # 임베딩 모델 (한국어를 포함한 다국어 지원)
     embedding_model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"

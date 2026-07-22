@@ -10,7 +10,6 @@ from app.schemas import (
     DeleteResponse,
     FaultCaseFileInfo,
     FaultCaseFileListResponse,
-    FaultCaseIndexResponse,
     UploadQueuedResponse,
 )
 from app.services import fault_case_processor, fault_case_store, pdf_processor
@@ -116,101 +115,27 @@ def _index_uploaded_fault_case_file(path: Path) -> Tuple[int, List[str]]:
     return 0, [f"{path.name}: 지원하지 않는 파일 형식입니다."]
 
 
-@router.post("/api/index-fault-cases", response_model=FaultCaseIndexResponse)
-def index_fault_cases():
+@router.post("/api/index-fault-cases", response_model=UploadQueuedResponse)
+def index_fault_cases(background_tasks: BackgroundTasks):
     """타지사 고장사례 폴더(PDF + HWP + 엑셀)를 읽어 fault_cases 컬렉션에 추가한다.
 
-    이미 추가된 사례(case_id 기준)는 건너뛴다. PDF/HWP는 원문 텍스트에서 라벨 기반
-    정규식(LLM 미사용)으로 원인/조치 필드를 한 번 뽑아내며(캐시됨), 엑셀은 컬럼을
-    그대로 매핑한다.
+    이미 추가된 사례(case_id 기준)는 건너뛴다. 파일이 많거나 크면 오래 걸릴 수 있어
+    실제 인덱싱은 백그라운드에서 진행하고, 이 응답은 바로 반환된다. GET /api/fault-cases를
+    다시 호출해 진행 상황(case_count)을 확인한다.
     """
-    added = 0
-    skipped = 0
-    errors: list[str] = []
-
     pdf_paths = fault_case_processor.discover_fault_case_pdfs(settings.fault_case_dir)
-    for pdf_path in pdf_paths:
-        case_id = f"pdf::{pdf_path.name}"
-        if fault_case_store.case_exists(case_id):
-            skipped += 1
-            continue
-
-        try:
-            pages = pdf_processor.extract_pages(pdf_path)
-            raw_text = "\n".join(p.text for p in pages)
-            if not raw_text.strip():
-                errors.append(f"{pdf_path.name}: 텍스트를 추출하지 못했습니다 (스캔 이미지일 수 있음).")
-                continue
-
-            case = _index_document_case(pdf_path, "pdf", raw_text)
-            fault_case_store.add_fault_cases([case])
-            added += 1
-        except Exception as exc:  # noqa: BLE001 - 개별 파일 실패가 전체 인덱싱을 막지 않도록
-            errors.append(f"{pdf_path.name}: {exc}")
-
     hwp_paths = fault_case_processor.discover_fault_case_hwps(settings.fault_case_dir)
-    for hwp_path in hwp_paths:
-        case_id = f"hwp::{hwp_path.name}"
-        if fault_case_store.case_exists(case_id):
-            skipped += 1
-            continue
-
-        try:
-            raw_text = fault_case_processor.extract_hwp_text(hwp_path)
-            if not raw_text.strip():
-                errors.append(f"{hwp_path.name}: 텍스트를 추출하지 못했습니다.")
-                continue
-
-            case = _index_document_case(hwp_path, "hwp", raw_text)
-            fault_case_store.add_fault_cases([case])
-            added += 1
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{hwp_path.name}: {exc}")
-
     excel_paths = fault_case_processor.discover_fault_case_excels(settings.fault_case_dir)
-    for xlsx_path in excel_paths:
-        try:
-            records = fault_case_processor.load_excel_records(xlsx_path)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{xlsx_path.name}: {exc}")
-            continue
+    all_paths = pdf_paths + hwp_paths + excel_paths
 
-        new_cases = []
-        for row in records:
-            case_id = f"excel::{xlsx_path.name}::{row['row_index']}"
-            if fault_case_store.case_exists(case_id):
-                skipped += 1
-                continue
+    if not all_paths:
+        return UploadQueuedResponse(
+            queued_files=[], message=f"'{settings.fault_case_dir}' 폴더에 파일이 없습니다."
+        )
 
-            title = row["title"] or row["description"][:40]
-            summary = (
-                f"{title}\n"
-                f"설비: {row['equipment']} / 기기명: {row['equipment_tag']}\n"
-                f"내용: {row['description']}"
-            )
-            new_cases.append(
-                fault_case_processor.FaultCase(
-                    case_id=case_id,
-                    source_type="excel",
-                    site=row["site"] or "미상",
-                    equipment_tag=row["equipment_tag"],
-                    occurrence_date=row["occurrence_date"],
-                    title=title,
-                    summary=summary,
-                    pdf_path=None,
-                    source_file=xlsx_path.name,
-                )
-            )
-
-        if new_cases:
-            fault_case_store.add_fault_cases(new_cases)
-            added += len(new_cases)
-
-    message = f"고장사례 인덱싱 완료: {added}건 추가, {skipped}건 스킵(이미 존재)."
-    if errors:
-        message += f" 오류 {len(errors)}건 (자세한 내용은 errors 참고)."
-
-    return FaultCaseIndexResponse(added=added, skipped=skipped, errors=errors, message=message)
+    background_tasks.add_task(_index_fault_case_files_in_background, all_paths)
+    message = f"{len(all_paths)}개 파일 인덱싱을 백그라운드에서 시작했습니다. 잠시 후 목록을 새로고침해 확인하세요."
+    return UploadQueuedResponse(queued_files=[p.name for p in all_paths], message=message)
 
 
 @router.get("/api/fault-case-pdf/{filename}")

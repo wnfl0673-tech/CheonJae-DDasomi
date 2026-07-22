@@ -31,27 +31,34 @@ def case_exists(case_id: str) -> bool:
     return bool(existing["ids"])
 
 
+# add() 호출마다 임베딩 함수가 배치 전체를 한 번에 인코딩하므로, 엑셀 개요표처럼
+# 수백 건이 한 번에 들어올 때 메모리가 제한된 배포 환경에서 OOM이 나지 않도록 작게 나눈다.
+MAX_ADD_BATCH_SIZE = 200
+
+
 def add_fault_cases(cases: List[FaultCase]) -> int:
     if not cases:
         return 0
 
     collection = get_fault_collection()
-    collection.add(
-        ids=[c.case_id for c in cases],
-        documents=[c.summary for c in cases],
-        metadatas=[
-            {
-                "source_type": c.source_type,
-                "site": c.site,
-                "equipment_tag": c.equipment_tag,
-                "occurrence_date": c.occurrence_date,
-                "title": c.title,
-                "pdf_path": c.pdf_path or "",
-                "source_file": c.source_file,
-            }
-            for c in cases
-        ],
-    )
+    for start in range(0, len(cases), MAX_ADD_BATCH_SIZE):
+        batch = cases[start : start + MAX_ADD_BATCH_SIZE]
+        collection.add(
+            ids=[c.case_id for c in batch],
+            documents=[c.summary for c in batch],
+            metadatas=[
+                {
+                    "source_type": c.source_type,
+                    "site": c.site,
+                    "equipment_tag": c.equipment_tag,
+                    "occurrence_date": c.occurrence_date,
+                    "title": c.title,
+                    "pdf_path": c.pdf_path or "",
+                    "source_file": c.source_file,
+                }
+                for c in batch
+            ],
+        )
     return len(cases)
 
 

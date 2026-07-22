@@ -9,7 +9,6 @@ from app.schemas import (
     DocumentFileInfo,
     DocumentListResponse,
     IndexedFileInfo,
-    IndexResponse,
     UploadQueuedResponse,
 )
 from app.services import full_text_search, pdf_processor, vector_store
@@ -39,40 +38,23 @@ def _index_single_pdf(pdf_path: Path) -> Optional[IndexedFileInfo]:
     return IndexedFileInfo(file_name=pdf_path.name, pages=pages, chunks=added)
 
 
-@router.post("/api/index", response_model=IndexResponse)
-def index_documents():
+@router.post("/api/index", response_model=UploadQueuedResponse)
+def index_documents(background_tasks: BackgroundTasks):
     """backend/documents 폴더의 PDF를 읽어 텍스트를 추출하고 ChromaDB에 저장한다.
 
-    이미 동일한 내용(해시)으로 인덱싱된 파일은 건너뛴다 (증분 인덱싱).
+    이미 동일한 내용(해시)으로 인덱싱된 파일은 건너뛴다 (증분 인덱싱). 대용량 PDF가
+    섞여 있으면 오래 걸릴 수 있어 실제 인덱싱은 백그라운드에서 진행하고, 이 응답은
+    바로 반환된다. GET /api/documents를 다시 호출해 진행 상황을 확인한다.
     """
     pdf_files = sorted(settings.documents_dir.glob("*.pdf"))
 
-    indexed: list[IndexedFileInfo] = []
-    skipped: list[str] = []
-    total_chunks = 0
-
-    for pdf_path in pdf_files:
-        result = _index_single_pdf(pdf_path)
-        if result is None:
-            skipped.append(pdf_path.name)
-        else:
-            indexed.append(result)
-            total_chunks += result.chunks
-
-    if indexed:
-        full_text_search.rebuild_cache()
-
     if not pdf_files:
         message = f"'{settings.documents_dir}' 폴더에 PDF 파일이 없습니다. PDF를 추가한 뒤 다시 호출하세요."
-    else:
-        message = f"인덱싱 완료: {len(indexed)}개 파일 처리, {len(skipped)}개 파일 스킵(변경 없음)."
+        return UploadQueuedResponse(queued_files=[], message=message)
 
-    return IndexResponse(
-        indexed_files=indexed,
-        skipped_files=skipped,
-        total_chunks_added=total_chunks,
-        message=message,
-    )
+    background_tasks.add_task(_index_pdfs_in_background, pdf_files)
+    message = f"{len(pdf_files)}개 파일 인덱싱을 백그라운드에서 시작했습니다. 잠시 후 목록을 새로고침해 확인하세요."
+    return UploadQueuedResponse(queued_files=[p.name for p in pdf_files], message=message)
 
 
 @router.get("/api/documents", response_model=DocumentListResponse)
